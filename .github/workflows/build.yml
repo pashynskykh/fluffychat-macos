@@ -1,0 +1,108 @@
+name: build
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  VERSION: v2.4.1
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          - "macos-26"
+          - "macos-15-intel"
+        cc:
+          - "clang"
+        cxx:
+          - "clang++"
+        include:
+          - os: "macos-26"
+            arch: "arm64"
+          - os: "macos-15-intel"
+            arch: "x86_64"
+    steps:
+      - name: Download Source Code
+        run: |
+          wget https://github.com/krille-chan/fluffychat/archive/refs/tags/${{ env.VERSION }}.tar.gz
+          tar -xzf ${{ env.VERSION }}.tar.gz --strip-components=1
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install -q flutter
+
+      - name: Build
+        run: |
+          # Disable code signing
+          sed -i '' 's/^.*CODE_SIGN_IDENTITY.*$/CODE_SIGN_IDENTITY = "";/' macos/Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/^.*PROVISIONING_PROFILE_SPECIFIER.*$/PROVISIONING_PROFILE_SPECIFIER = "";/' macos/Runner.xcodeproj/project.pbxproj
+          sed -i '' '/.*PBXNativeTarget.*$/ a\
+          \    PROVISIONING_PROFILE_SPECIFIER = "";\
+          ' macos/Runner.xcodeproj/project.pbxproj
+          
+          # Build
+          flutter build macos --release
+
+      - name: Create DMG
+        run: |
+          mkdir -p /tmp/fluffychat_dmg
+          cp -R build/macos/Build/Products/Release/FluffyChat.app /tmp/fluffychat_dmg/
+          ln -s /Applications /tmp/fluffychat_dmg/Applications
+
+          MAXIMUM_CREATE_ATTEMPTS=3
+          CREATE_ATTEMPTS=0
+          until
+              (( CREATE_ATTEMPTS++ ))
+              hdiutil create -volname "FluffyChat" -srcfolder /tmp/fluffychat_dmg -ov -format UDZO fluffychat_macos_${{ env.VERSION }}_${{ matrix.arch }}.dmg
+              EXITCODE=$?
+
+              if (( EXITCODE ==  0 )); then
+                  break
+              fi
+
+              if (( EXITCODE != 16 )); then
+                  exit $EXITCODE
+              fi
+          do
+              if (( CREATE_ATTEMPTS == MAXIMUM_CREATE_ATTEMPTS )); then
+                  exit 16
+              fi
+
+              sleep $(( 1 * (2 ** CREATE_ATTEMPTS) ))
+          done
+          unset CREATE_ATTEMPTS
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: build_artifact_${{ matrix.arch }}.zip
+          path: fluffychat_macos_${{ env.VERSION }}_${{ matrix.arch }}.dmg
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: build_artifact_*.zip
+          merge-multiple: true
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ env.VERSION }}
+          tag_name: ${{ env.VERSION }}
+          prerelease: false
+          draft: false
+          make_latest: true
+          files: |
+            fluffychat_macos_${{ env.VERSION }}_arm64.dmg
+            fluffychat_macos_${{ env.VERSION }}_x86_64.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
