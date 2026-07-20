@@ -6,7 +6,7 @@ on:
       - main
 
 env:
-  VERSION: v2.6.0
+  VERSION: v2.8.0
 
 jobs:
   build:
@@ -35,9 +35,18 @@ jobs:
         run: |
           brew update
           brew install -q flutter
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          rustup update stable
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
 
       - name: Build
+        env:
+          CFLAGS: "-arch ${{ matrix.arch }}"
+          CXXFLAGS: "-arch ${{ matrix.arch }}"
+          LDFLAGS: "-arch ${{ matrix.arch }}"
         run: |
+          source $HOME/.cargo/env
+          export PATH="$HOME/.cargo/bin:$PATH"
           # Disable code signing
           sed -i '' 's/^.*CODE_SIGN_IDENTITY.*$/CODE_SIGN_IDENTITY = "";/' macos/Runner.xcodeproj/project.pbxproj
           sed -i '' 's/^.*PROVISIONING_PROFILE_SPECIFIER.*$/PROVISIONING_PROFILE_SPECIFIER = "";/' macos/Runner.xcodeproj/project.pbxproj
@@ -100,7 +109,7 @@ jobs:
           tag_name: ${{ env.VERSION }}
           prerelease: false
           draft: false
-          make_latest: true
+          make_latest: false
           files: |
             fluffychat_macos_${{ env.VERSION }}_arm64.dmg
             fluffychat_macos_${{ env.VERSION }}_x86_64.dmg
